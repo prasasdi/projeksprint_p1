@@ -3,9 +3,10 @@ package user_service
 import (
 	"context"
 	"fmt"
-	"github.com/levensspel/go-gin-template/cache"
 	"strings"
 	"time"
+
+	"github.com/levensspel/go-gin-template/cache"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/levensspel/go-gin-template/dto"
@@ -144,6 +145,15 @@ func (s *service) Update(ctx context.Context, input dto.UpdateEmployeeRequest, i
 	txPool := pool.(*pgxpool.Tx)
 	defer helper.RollbackOrCommit(ctx, txPool)
 
+	id, err := s.employeeRepo.GetEmployeeIdIfExist(ctx, txPool, identityNumber, managerId)
+	if err != nil {
+		s.logger.Error(err.Error(), helper.EmployeeServiceUpdate, err)
+		return dto.EmployeePayload{}, err
+	}
+	if id == "" {
+		return dto.EmployeePayload{}, helper.ErrNotFound
+	}
+
 	if input.DepartmentID != "" {
 		isOwnedByManager, err := s.employeeRepo.IsDepartmentOwnedByManager(ctx, txPool, input.DepartmentID, managerId)
 		if err != nil {
@@ -156,13 +166,16 @@ func (s *service) Update(ctx context.Context, input dto.UpdateEmployeeRequest, i
 		}
 	}
 
-	id, err := s.employeeRepo.GetEmployeeIdIfExist(ctx, txPool, identityNumber, managerId)
-	if err != nil {
-		s.logger.Error(err.Error(), helper.EmployeeServiceUpdate, err)
-		return dto.EmployeePayload{}, err
-	}
-	if id != "" {
-		return dto.EmployeePayload{}, helper.ErrConflict
+	if input.IdentityNumber != "" {
+		// Check if the assigned identity number is already used by another employee
+		otherEmployeeId, err := s.employeeRepo.GetEmployeeIdIfExist(ctx, txPool, input.IdentityNumber, managerId)
+		if err != nil {
+			s.logger.Error(err.Error(), helper.EmployeeServiceUpdate, err)
+			return dto.EmployeePayload{}, err
+		}
+		if otherEmployeeId != "" {
+			return dto.EmployeePayload{}, helper.ErrConflict
+		}
 	}
 
 	employee, err := s.employeeRepo.Update(ctx, txPool, entity.Employee{
